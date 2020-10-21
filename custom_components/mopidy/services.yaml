@@ -1,0 +1,6 @@
+shuffle_tracklist:
+  description: "Shuffle the active track list"
+  fields:
+    entity_id:
+      description: Entity ID of a media_player from the Mopidy integration.
+      example: "media_player.music_player"
