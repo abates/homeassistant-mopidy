@@ -5,5 +5,5 @@
   "issue_tracker": "https://github.com/abates/homeassistant-mopidy/issues",
   "requirements": ["git+https://github.com/ismailof/mopidy-json-client.git@master#mopidy-json-client"],
   "codeowners": ["@abates"],
-  "config_flow": false
+  "config_flow": true
 }

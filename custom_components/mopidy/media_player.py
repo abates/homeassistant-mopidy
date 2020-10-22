@@ -1,4 +1,5 @@
 """Support to interact with a Music Player Daemon."""
+from . import unique_id
 from homeassistant.helpers import entity_platform
 import logging
 from datetime import timedelta
@@ -39,9 +40,9 @@ from homeassistant.util import ssl
 from homeassistant.util.dt import utcnow
 from mopidy_json_client import MopidyClient
 
-_LOGGER = logging.getLogger(__name__)
+from .const import SERVICE_SHUFFLE, DEFAULT_NAME
 
-DEFAULT_NAME = "Mopidy"
+_LOGGER = logging.getLogger(__name__)
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA_BASE.extend(
     {
@@ -72,7 +73,7 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
     async_add_entities([device], True)
 
     platform = entity_platform.current_platform.get()
-    platform.async_register_entity_service("shuffle_tracklist", {}, "shuffle_tracklist")
+    platform.async_register_entity_service(SERVICE_SHUFFLE, {}, "shuffle_tracklist")
 
 
 def notify(f):
@@ -201,7 +202,7 @@ class MopidyDevice(MediaPlayerEntity):
 
     @property
     def unique_id(self):
-        return f"mopidy.{self._ws_url}"
+        return unique_id(self._ws_url)
 
     @property
     def name(self):
