@@ -1,13 +1,15 @@
 """Support to interact with a Music Player Daemon."""
+import asyncio
+from homeassistant.config_entries import ConfigEntry
 from . import unique_id
 from homeassistant.helpers import entity_platform
 import logging
 from datetime import timedelta
-from ssl import SSLCertVerificationError
 from typing import Optional
 from urllib.parse import urljoin, urlparse
 
 import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers.typing import HomeAssistantType
 import voluptuous as vol
 from aiohttp.client_exceptions import ClientConnectorError
 from homeassistant.components.media_player import MediaPlayerEntity
@@ -38,9 +40,10 @@ from homeassistant.helpers.config_validation import PLATFORM_SCHEMA_BASE
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import ssl
 from homeassistant.util.dt import utcnow
-from mopidy_json_client import MopidyClient
 
-from .const import SERVICE_SHUFFLE, DEFAULT_NAME
+from .const import DOMAIN, SERVICE_SHUFFLE, DEFAULT_NAME
+
+from mopidy_client import Client
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -64,21 +67,29 @@ SUPPORT_MOPIDY = (
 )
 
 
-async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
+async def async_setup_entry(
+    hass: HomeAssistantType, entry: ConfigEntry, async_add_entities
+):
     """Set up the Mopidy platform."""
-    name = config.get(CONF_NAME)
-    http_url = config.get(CONF_URL)
+    ws_url = entry.data[CONF_URL]
+    _LOGGER.debug("Setting up mopidy server at url %s", ws_url)
 
-    device = MopidyDevice(hass, name, http_url)
+    device = MopidyDevice(hass, ws_url)
     async_add_entities([device], True)
 
     platform = entity_platform.current_platform.get()
-    platform.async_register_entity_service(SERVICE_SHUFFLE, {}, "shuffle_tracklist")
+    platform.async_register_entity_service(
+        SERVICE_SHUFFLE, {}, "async_shuffle_tracklist"
+    )
 
 
 def notify(f):
-    def wrapper(*args, **kwargs):
-        f(*args, **kwargs)
+    async def wrapper(*args, **kwargs):
+        if asyncio.iscoroutinefunction(f):
+            await f(*args, **kwargs)
+        else:
+            f(*args, **kwargs)
+
         if args[0].entity_id:
             args[0].async_schedule_update_ha_state()
 
@@ -86,7 +97,7 @@ def notify(f):
 
 
 class MopidyDevice(MediaPlayerEntity):
-    def __init__(self, hass, name, ws_url):
+    def __init__(self, hass, ws_url):
         self.hass = hass
         self._ws_url = ws_url
         _url = urlparse(ws_url)
@@ -98,8 +109,6 @@ class MopidyDevice(MediaPlayerEntity):
             raise f"Unknown scheme {_url.scheme} for websocket url"
 
         self._url = _url.geturl()
-        self._name = name
-
         self._state = None
         self._playlist = None
         self._current_track = None
@@ -111,25 +120,27 @@ class MopidyDevice(MediaPlayerEntity):
         self._track_num = None
         self._remove_listener = None
 
-        self._client = MopidyClient(
-            ws_url=ws_url,
-            connection_handler=self._on_connection,
-            autoconnect=False,
-        )
+        self._client = Client(ws_url)
 
-        self._client.bind_event("playlist_changed", self._playlist_changed)
-        self._client.bind_event("playback_state_changed", self._playback_state_changed)
-        self._client.bind_event("track_playback_started", self._track_playback_started)
-        self._client.bind_event("options_changed", self._options_changed)
-        self._client.bind_event("seeked", self._seeked)
+        self._client.on_playlist_changed(self._playlist_changed)
+        self._client.on_playback_state_changed(self._playback_state_changed)
+        self._client.on_track_playback_started(self._track_playback_started)
+        self._client.on_options_changed(self._options_changed)
+        self._client.on_seeked(self._seeked)
 
     async def async_added_to_hass(self):
-        self.hass.async_add_executor_job(self._client.connect)
+        await self._client.connect(validate_cert=False)
+        state = await self._client.playback.get_state()
+        await self._playback_state_changed(None, state)
+        tl_track = await self._client.playback.get_current_tl_track()
+        if tl_track:
+            await self._track_playback_started(tl_track)
 
-    def _on_connection(self, conn_state):
-        if conn_state:
-            self._playback_state_changed(None, self._client.playback.get_state())
-            self._track_playback_started(None)
+    async def async_will_remove_from_hass(self):
+        """Disconnect callbacks."""
+        await super().async_will_remove_from_hass()
+        _LOGGER.debug("Disconnecting from %s", self._ws_url)
+        self._client.disconnect()
 
     @notify
     def _playlist_changed(self, playlist):
@@ -151,15 +162,20 @@ class MopidyDevice(MediaPlayerEntity):
             new_state = STATE_IDLE
         else:
             new_state = STATE_UNKNOWN
-        (old_state, self._state) = (self._state, new_state)
+        self._state = new_state
 
     @notify
-    def _update_pos(self, t):
-        self._position = self._client.playback.get_time_position() / 1000
-        self._position_last_updated = utcnow()
+    async def _update_pos(self, t):
+        pos = await self._client.playback.get_time_position()
+        if pos:
+            self._position_last_updated = utcnow()
+            self._position = pos / 1000
+        else:
+            self._position = 0
 
     @notify
-    def _track_playback_started(self, tl_track):
+    async def _track_playback_started(self, tl_track):
+        _LOGGER.debug("Playback sarted: %s", tl_track)
         if self._remove_listener:
             self._remove_listener()
 
@@ -167,28 +183,30 @@ class MopidyDevice(MediaPlayerEntity):
             self.hass, self._update_pos, timedelta(seconds=1)
         )
 
-        self._current_track = self._client.playback.get_current_track()
+        self._current_track = tl_track.track
+        # self._current_track = self._client.playback.get_current_track()
         if self._current_track:
-            images = self._client.library.get_images(
-                uris=[self._current_track["uri"]], timeout=30
+            images = await self._client.library.get_images(
+                uris=[self._current_track.uri]
             )
+            _LOGGER.debug("IMAGES: %s", images)
             if (
-                images[self._current_track["uri"]]
-                and len(images[self._current_track["uri"]]) > 0
+                images[self._current_track.uri]
+                and len(images[self._current_track.uri]) > 0
             ):
-                url = images[self._current_track["uri"]][0]["uri"]
+                url = images[self._current_track.uri][0].uri
                 self._media_image_url = urljoin(self._url, url)
             else:
                 self._media_image_url = None
 
-            self._track_num = self._client.tracklist.index()
+            self._track_num = await self._client.tracklist.index()
         else:
             self._media_image_url = None
 
     @notify
-    def _options_changed(self):
-        self._shuffle = self._client.tracklist.get_random(timeout=10)
-        self._repeat = self._client.tracklist.get_repeat(timeout=10)
+    async def _options_changed(self):
+        self._shuffle = await self._client.tracklist.get_random()
+        self._repeat = await self._client.tracklist.get_repeat()
 
     @notify
     def _seeked(self, time_position):
@@ -197,16 +215,12 @@ class MopidyDevice(MediaPlayerEntity):
         self._position_last_updated = utcnow()
         self._position = time_position / 1000
 
-    def shuffle_tracklist(self):
-        self._client.tracklist.shuffle()
+    async def async_shuffle_tracklist(self):
+        await self._client.tracklist.shuffle()
 
     @property
     def unique_id(self):
         return unique_id(self._ws_url)
-
-    @property
-    def name(self):
-        return self._name
 
     @property
     def should_poll(self) -> bool:
@@ -221,7 +235,7 @@ class MopidyDevice(MediaPlayerEntity):
     def media_content_id(self):
         """Content ID of current playing media."""
         if self._current_track:
-            return self._current_track["uri"]
+            return self._current_track.uri
         return None
 
     @property
@@ -235,7 +249,7 @@ class MopidyDevice(MediaPlayerEntity):
         if self._current_track:
             # track length from mopidy is in milliseconds, convert
             # to seconds for HomeAssistant
-            return self._current_track["length"] / 1000
+            return self._current_track.length / 1000
         return None
 
     @property
@@ -260,21 +274,21 @@ class MopidyDevice(MediaPlayerEntity):
     def media_title(self):
         """Title of current playing media."""
         if self._current_track:
-            return self._current_track["name"]
+            return self._current_track.name
         return None
 
     @property
     def media_artist(self):
         """Artist of current playing media, music track only."""
         if self._current_track:
-            return [artist["name"] for artist in self._current_track["artists"]]
+            return [artist.name for artist in self._current_track.artists]
         return None
 
     @property
     def media_album_name(self):
         """Album name of current playing media, music track only."""
         if self._current_track:
-            return self._current_track["album"]["name"]
+            return self._current_track.album.name
         return None
 
     @property
@@ -302,46 +316,46 @@ class MopidyDevice(MediaPlayerEntity):
 
         return SUPPORT_MOPIDY
 
-    def media_play(self):
+    async def async_media_play(self):
         """Send play command."""
-        self._client.playback.play()
+        await self._client.playback.play()
 
-    def media_pause(self):
+    async def async_media_pause(self):
         """Send pause command."""
-        self._client.playback.pause()
+        await self._client.playback.pause()
 
-    def media_stop(self):
+    async def async_media_stop(self):
         """Send stop command."""
-        self._client.playback.stop()
+        await self._client.playback.stop()
 
-    def media_previous_track(self):
+    async def async_media_previous_track(self):
         """Send previous track command."""
-        self._client.playback.previous()
+        await self._client.playback.previous()
 
-    def media_next_track(self):
+    async def async_media_next_track(self):
         """Send next track command."""
-        self._client.playback.next()
+        await self._client.playback.next()
 
-    def media_seek(self, position):
+    async def async_media_seek(self, position):
         """Send seek command."""
-        self._client.playback.seek(position * 1000)
+        await self._client.playback.seek(position * 1000)
 
-    def play_media(self, media_type, media_id, **kwargs):
+    async def async_play_media(self, media_type, media_id, **kwargs):
         """Send the media player the command for playing a playlist."""
         _LOGGER.debug("Playing playlist: %s", media_id)
         if media_type == MEDIA_TYPE_PLAYLIST:
-            self._client.tracklist.clear()
-            self._client.tracklist.add(media_id)
-            self._client.playback.play()
+            await self._client.tracklist.clear()
+            await self._client.tracklist.add(media_id)
+            await self._client.playback.play()
         else:
-            self._client.clear()
-            self._client.tracklist.add(media_id)
-            self._client.playback.play()
+            await self._client.clear()
+            await self._client.tracklist.add(media_id)
+            await self._client.playback.play()
 
-    def clear_playlist(self):
+    async def async_clear_playlist(self):
         """Clear players playlist."""
-        self._client.tracklist.clear()
+        await self._client.tracklist.clear()
 
-    def set_shuffle(self, shuffle):
+    async def async_set_shuffle(self, shuffle):
         """Enable/disable shuffle mode."""
-        raise self._client.tracklist.set_random(shuffle)
+        await self._client.tracklist.set_random(shuffle)

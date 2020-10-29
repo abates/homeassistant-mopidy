@@ -1,8 +1,11 @@
+import logging
 from homeassistant.const import CONF_URL, CONF_NAME
 import voluptuous as vol
 from homeassistant import config_entries
 from .const import DOMAIN
 from . import unique_id
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class MopidyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -14,8 +17,10 @@ class MopidyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_NAME): str,
-                    vol.Required(CONF_URL): str,
+                    vol.Required(CONF_NAME, default="Mopidy"): str,
+                    vol.Required(
+                        CONF_URL, default="ws://localhost:6680/mopidy/ws"
+                    ): str,
                 }
             ),
             errors=errors or {},
@@ -26,16 +31,22 @@ class MopidyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is None:
             return await self._show_setup_form(user_input)
 
-        id = unique_id(user_input[CONF_URL])
+        # check for existing
         entries = self._async_current_entries()
         for entry in entries:
-            if entry.data[CONF_URL] == id:
+            _LOGGER.debug("Entry: %s", entry.unique_id)
+            if (
+                entry.data[CONF_URL] == user_input[CONF_URL]
+                or entry.unique_id == user_input[CONF_NAME]
+            ):
                 return self.async_abort(reason="server_exists")
 
+        # attempt to connect
+
+        await self.async_set_unique_id(user_input[CONF_NAME])
         return self.async_create_entry(
-            title=id,
+            title=user_input[CONF_NAME],
             data={
-                CONF_NAME: user_input[CONF_NAME],
                 CONF_URL: user_input[CONF_URL],
             },
         )

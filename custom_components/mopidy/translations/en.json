@@ -1,0 +1,20 @@
+{
+    "config": {
+        "abort": {
+            "configured": "Mopidy Server allready configured."
+        },
+        "error": {
+        },
+        "flow_title": "{name}",
+        "step": {
+            "user": {
+                "title": "Mopidy",
+                "description": "Set up a connection to a Mopidy music server",
+                "data": {
+                  "name": "Server Name",
+                  "url": "Web-service URL"
+                }
+            }
+        }
+    }
+}

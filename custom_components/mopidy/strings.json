@@ -1,0 +1,14 @@
+{
+    "config": {
+        "flow_title": "{name}",
+        "step": {
+            "user": {
+                "title": "Mopidy",
+                "description": "Set up a connection to a Mopidy music server"
+            }
+        },
+        "abort": {
+            "server_exists": "Mopidy Server allready configured."
+        }
+    }
+}
