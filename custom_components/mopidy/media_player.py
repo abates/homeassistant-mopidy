@@ -72,9 +72,11 @@ async def async_setup_entry(
 ):
     """Set up the Mopidy platform."""
     ws_url = entry.data[CONF_URL]
+    validate_cert = entry.data["validate_cert"]
+
     _LOGGER.debug("Setting up mopidy server at url %s", ws_url)
 
-    device = MopidyDevice(hass, ws_url)
+    device = MopidyDevice(hass, ws_url, validate_cert)
     async_add_entities([device], True)
 
     platform = entity_platform.current_platform.get()
@@ -97,7 +99,7 @@ def notify(f):
 
 
 class MopidyDevice(MediaPlayerEntity):
-    def __init__(self, hass, ws_url):
+    def __init__(self, hass, ws_url, validate_cert=True):
         self.hass = hass
         self._ws_url = ws_url
         _url = urlparse(ws_url)
@@ -109,6 +111,7 @@ class MopidyDevice(MediaPlayerEntity):
             raise f"Unknown scheme {_url.scheme} for websocket url"
 
         self._url = _url.geturl()
+        self._validate_cert = validate_cert
         self._state = None
         self._playlist = None
         self._current_track = None
@@ -129,7 +132,13 @@ class MopidyDevice(MediaPlayerEntity):
         self._client.on_seeked(self._seeked)
 
     async def async_added_to_hass(self):
-        await self._client.connect(validate_cert=False)
+        context = None
+        if self._validate_cert:
+            context = ssl.client_context()
+
+        await self._client.connect(
+            validate_cert=self._validate_cert, ssl_options=context
+        )
         state = await self._client.playback.get_state()
         await self._playback_state_changed(None, state)
         tl_track = await self._client.playback.get_current_tl_track()
@@ -140,7 +149,7 @@ class MopidyDevice(MediaPlayerEntity):
         """Disconnect callbacks."""
         await super().async_will_remove_from_hass()
         _LOGGER.debug("Disconnecting from %s", self._ws_url)
-        self._client.disconnect()
+        await self._client.disconnect()
 
     @notify
     def _playlist_changed(self, playlist):
@@ -175,7 +184,6 @@ class MopidyDevice(MediaPlayerEntity):
 
     @notify
     async def _track_playback_started(self, tl_track):
-        _LOGGER.debug("Playback sarted: %s", tl_track)
         if self._remove_listener:
             self._remove_listener()
 
@@ -189,7 +197,6 @@ class MopidyDevice(MediaPlayerEntity):
             images = await self._client.library.get_images(
                 uris=[self._current_track.uri]
             )
-            _LOGGER.debug("IMAGES: %s", images)
             if (
                 images[self._current_track.uri]
                 and len(images[self._current_track.uri]) > 0

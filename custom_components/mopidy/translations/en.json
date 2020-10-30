@@ -1,9 +1,16 @@
 {
     "config": {
-        "abort": {
-            "configured": "Mopidy Server allready configured."
-        },
         "error": {
+            "unknown_error": "An unknown error occurred",
+            "unknown_version": "Failed to determine Mopidy server version",
+            "connection_refused": "Connection refused",
+            "connection_timeout": "Connection Timeout",
+            "connection_error_301": "HTTP 301: Redirected. Redirects are not supported, please use the correct websocket URL",
+            "connection_error_302": "HTTP 302: Redirected. Redirects are not supported, please use the correct websocket URL",
+            "connection_error_404": "HTTP 404: URL not found",
+            "server_exists": "Server already configured",
+            "name_exists": "Duplicate device name",
+            "ssl_verification": "SSL Certificate verification failed"
         },
         "flow_title": "{name}",
         "step": {
@@ -12,7 +19,8 @@
                 "description": "Set up a connection to a Mopidy music server",
                 "data": {
                   "name": "Server Name",
-                  "url": "Web-service URL"
+                  "url": "Web-service URL",
+                  "no_check_cert": "Don't check SSL Certificate (for wss scheme)"
                 }
             }
         }
