@@ -1,6 +1,6 @@
 """Mopidy HTTP/JSON-RPC implementation"""
 
-from config.custom_components.mopidy.const import DOMAIN
+from .const import DOMAIN
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.typing import HomeAssistantType
 
