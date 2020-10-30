@@ -21,3 +21,8 @@ async def async_setup_entry(hass: HomeAssistantType, entry: ConfigEntry) -> bool
 
 async def async_unload_entry(hass, entry):
     return await hass.config_entries.async_forward_entry_unload(entry, "media_player")
+
+
+async def update_listener(hass: HomeAssistantType, config_entry: ConfigEntry):
+    """Handle options update."""
+    await hass.config_entries.async_reload(config_entry.entry_id)

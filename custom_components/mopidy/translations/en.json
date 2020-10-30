@@ -24,5 +24,16 @@
                 }
             }
         }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "title": "Mopidy",
+                "descripion": "Specify additional options",
+                "data": {
+                    "auto_shuffle": "Automatically shuffle tracks when starting playlist"
+                }
+            }
+        }
     }
 }

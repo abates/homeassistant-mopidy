@@ -29,18 +29,20 @@ from homeassistant.components.media_player.const import (
 from homeassistant.const import (
     CONF_NAME,
     CONF_URL,
+    CONF_VERIFY_SSL,
     STATE_IDLE,
     STATE_PAUSED,
     STATE_PLAYING,
     STATE_UNKNOWN,
 )
+
 from homeassistant.helpers import aiohttp_client
 from homeassistant.helpers.config_validation import PLATFORM_SCHEMA_BASE
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import ssl
 from homeassistant.util.dt import utcnow
 
-from .const import DOMAIN, SERVICE_SHUFFLE, DEFAULT_NAME
+from .const import CONF_AUTO_SHUFFLE, DOMAIN, SERVICE_SHUFFLE, DEFAULT_NAME
 
 from mopidy_client import Client
 
@@ -67,15 +69,15 @@ SUPPORT_MOPIDY = (
 
 
 async def async_setup_entry(
-    hass: HomeAssistantType, entry: ConfigEntry, async_add_entities
+    hass: HomeAssistantType, config_entry: ConfigEntry, async_add_entities
 ):
     """Set up the Mopidy platform."""
-    ws_url = entry.data[CONF_URL]
-    validate_cert = entry.data["validate_cert"]
+    ws_url = config_entry.data[CONF_URL]
+    validate_cert = config_entry.data[CONF_VERIFY_SSL]
 
     _LOGGER.debug("Setting up mopidy server at url %s", ws_url)
 
-    device = MopidyDevice(hass, ws_url, validate_cert)
+    device = MopidyDevice(hass, ws_url, validate_cert, options=config_entry.options)
     async_add_entities([device], True)
 
     platform = entity_platform.current_platform.get()
@@ -98,9 +100,11 @@ def notify(f):
 
 
 class MopidyDevice(MediaPlayerEntity):
-    def __init__(self, hass, ws_url, validate_cert=True):
+    def __init__(self, hass, ws_url, validate_cert=True, options={}):
         self.hass = hass
         self._ws_url = ws_url
+        self._options = options
+
         _url = urlparse(ws_url)
         if _url.scheme == "ws":
             _url = _url._replace(scheme="http")
@@ -352,6 +356,9 @@ class MopidyDevice(MediaPlayerEntity):
         if media_type == MEDIA_TYPE_PLAYLIST:
             await self._client.tracklist.clear()
             await self._client.tracklist.add(media_id)
+            if self._options.get(CONF_AUTO_SHUFFLE):
+                await self.async_shuffle_tracklist()
+
             await self._client.playback.play()
         else:
             await self._client.clear()
