@@ -1,7 +1,6 @@
 """Support to interact with a Music Player Daemon."""
 import asyncio
 from homeassistant.config_entries import ConfigEntry
-from . import unique_id
 from homeassistant.helpers import entity_platform
 import logging
 from datetime import timedelta
@@ -227,7 +226,7 @@ class MopidyDevice(MediaPlayerEntity):
 
     @property
     def unique_id(self):
-        return unique_id(self._ws_url)
+        return self._ws_url
 
     @property
     def should_poll(self) -> bool:

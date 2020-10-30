@@ -10,7 +10,6 @@ import voluptuous as vol
 from homeassistant import config_entries
 from .const import DOMAIN
 from mopidy_client import Client
-from . import unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -55,7 +54,7 @@ class MopidyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if entry.data[CONF_URL] == user_input[CONF_URL]:
                 errors[CONF_URL] = "server_exists"
                 return await self._show_setup_form(user_input, errors)
-            elif entry.unique_id == unique_id(user_input[CONF_URL]):
+            elif entry.unique_id == user_input[CONF_URL]:
                 errors[CONF_NAME] = "name_exists"
                 return await self._show_setup_form(user_input, errors)
 
@@ -88,7 +87,7 @@ class MopidyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if bool(errors):
             return await self._show_setup_form(user_input, errors)
 
-        await self.async_set_unique_id(unique_id(user_input[CONF_URL]))
+        await self.async_set_unique_id(user_input[CONF_URL])
         return self.async_create_entry(
             title=user_input[CONF_NAME],
             data={

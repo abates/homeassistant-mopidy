@@ -5,10 +5,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.typing import HomeAssistantType
 
 
-def unique_id(url):
-    return f"{url}"
-
-
 async def async_setup(hass, config):
     return True
 
