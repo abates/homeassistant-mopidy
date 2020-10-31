@@ -22,6 +22,7 @@ from homeassistant.components.media_player.const import (
     SUPPORT_PLAY_MEDIA,
     SUPPORT_PREVIOUS_TRACK,
     SUPPORT_SEEK,
+    SUPPORT_SELECT_SOURCE,
     SUPPORT_SHUFFLE_SET,
     SUPPORT_STOP,
 )
@@ -42,7 +43,13 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import ssl
 from homeassistant.util.dt import utcnow
 
-from .const import CONF_AUTO_SHUFFLE, DOMAIN, SERVICE_SHUFFLE, DEFAULT_NAME
+from .const import (
+    CONF_AUTO_SHUFFLE,
+    DOMAIN,
+    SERVICE_REFRESH_PLAYLISTS,
+    SERVICE_SHUFFLE,
+    DEFAULT_NAME,
+)
 
 from mopidy_client import Client
 
@@ -65,6 +72,7 @@ SUPPORT_MOPIDY = (
     | SUPPORT_SHUFFLE_SET
     | SUPPORT_SEEK
     | SUPPORT_STOP
+    | SUPPORT_SELECT_SOURCE
 )
 
 
@@ -85,6 +93,10 @@ async def async_setup_entry(
         SERVICE_SHUFFLE, {}, "async_shuffle_tracklist"
     )
 
+    platform.async_register_entity_service(
+        SERVICE_REFRESH_PLAYLISTS, {}, "async_refresh_playlists"
+    )
+
 
 def notify(f):
     async def wrapper(*args, **kwargs):
@@ -97,6 +109,11 @@ def notify(f):
             args[0].async_schedule_update_ha_state()
 
     return wrapper
+
+
+class InvalidPlaylistError(Exception):
+    def __init__(self, msg):
+        super().__init__(self, msg)
 
 
 class MopidyDevice(MediaPlayerEntity):
@@ -117,6 +134,7 @@ class MopidyDevice(MediaPlayerEntity):
         self._validate_cert = validate_cert
         self._state = None
         self._playlist = None
+        self._playlists = {}
         self._current_track = None
         self._repeat = None
         self._shuffle = None
@@ -142,6 +160,7 @@ class MopidyDevice(MediaPlayerEntity):
         await self._client.connect(
             validate_cert=self._validate_cert, ssl_options=context
         )
+        await self.async_refresh_playlists()
         state = await self._client.playback.get_state()
         await self._playback_state_changed(None, state)
         tl_track = await self._client.playback.get_current_tl_track()
@@ -326,6 +345,10 @@ class MopidyDevice(MediaPlayerEntity):
 
         return SUPPORT_MOPIDY
 
+    @property
+    def source_list(self):
+        return [item for item in self._playlists.keys()]
+
     async def async_media_play(self):
         """Send play command."""
         await self._client.playback.play()
@@ -350,20 +373,38 @@ class MopidyDevice(MediaPlayerEntity):
         """Send seek command."""
         await self._client.playback.seek(position * 1000)
 
+    async def async_refresh_playlists(self):
+        self._playlists = {}
+        playlists = await self._client.playlists.as_list()
+        for playlist in playlists:
+            self._playlists[playlist.name] = playlist.uri
+
+    async def async_select_source(self, source):
+        if source in self._playlists:
+            await self._client.tracklist.clear()
+            uris = [
+                item.uri
+                for item in await self._client.playlists.get_items(
+                    uri=self._playlists[source]
+                )
+            ]
+            await self._client.tracklist.add(uris=uris)
+            if self._options.get(CONF_AUTO_SHUFFLE):
+                await self.async_shuffle_tracklist()
+        else:
+            raise InvalidPlaylistError(source)
+
     async def async_play_media(self, media_type, media_id, **kwargs):
         """Send the media player the command for playing a playlist."""
         _LOGGER.debug("Playing playlist: %s", media_id)
+        uris = []
         if media_type == MEDIA_TYPE_PLAYLIST:
-            await self._client.tracklist.clear()
-            await self._client.tracklist.add(media_id)
-            if self._options.get(CONF_AUTO_SHUFFLE):
-                await self.async_shuffle_tracklist()
-
-            await self._client.playback.play()
+            await self.select_source(media_id)
         else:
-            await self._client.clear()
-            await self._client.tracklist.add(media_id)
-            await self._client.playback.play()
+            await self._client.tracklist.clear()
+            await self._client.tracklist.add(uris=[media_id])
+
+        await self._client.tracklist.play()
 
     async def async_clear_playlist(self):
         """Clear players playlist."""
