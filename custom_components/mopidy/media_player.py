@@ -404,7 +404,7 @@ class MopidyDevice(MediaPlayerEntity):
             await self._client.tracklist.clear()
             await self._client.tracklist.add(uris=[media_id])
 
-        await self._client.tracklist.play()
+        await self._client.playback.play()
 
     async def async_clear_playlist(self):
         """Clear players playlist."""
