@@ -399,7 +399,7 @@ class MopidyDevice(MediaPlayerEntity):
         _LOGGER.debug("Playing playlist: %s", media_id)
         uris = []
         if media_type == MEDIA_TYPE_PLAYLIST:
-            await self.select_source(media_id)
+            await self.async_select_source(media_id)
         else:
             await self._client.tracklist.clear()
             await self._client.tracklist.add(uris=[media_id])
