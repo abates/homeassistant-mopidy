@@ -170,6 +170,8 @@ class MopidyDevice(MediaPlayerEntity):
     async def async_will_remove_from_hass(self):
         """Disconnect callbacks."""
         await super().async_will_remove_from_hass()
+        if self._remove_listener:
+            self._remove_listener()
         _LOGGER.debug("Disconnecting from %s", self._ws_url)
         await self._client.disconnect()
 
@@ -191,8 +193,11 @@ class MopidyDevice(MediaPlayerEntity):
                 self._remove_listener()
                 self._remove_listener = None
             new_state = STATE_IDLE
+            self._media_image_url = None
+            self._current_track = None
         else:
             new_state = STATE_UNKNOWN
+            self._media_image_url = None
         self._state = new_state
 
     @notify
@@ -351,6 +356,10 @@ class MopidyDevice(MediaPlayerEntity):
 
     async def async_media_play(self):
         """Send play command."""
+        track = await self._client.playback.get_current_tl_track()
+        if track is None:
+            await self._client.playback.next()
+        # else:
         await self._client.playback.play()
 
     async def async_media_pause(self):
@@ -360,6 +369,7 @@ class MopidyDevice(MediaPlayerEntity):
     async def async_media_stop(self):
         """Send stop command."""
         await self._client.playback.stop()
+        await self._client.tracklist.clear()
 
     async def async_media_previous_track(self):
         """Send previous track command."""
@@ -404,7 +414,7 @@ class MopidyDevice(MediaPlayerEntity):
             await self._client.tracklist.clear()
             await self._client.tracklist.add(uris=[media_id])
 
-        await self._client.playback.play()
+        await self.async_media_play()
 
     async def async_clear_playlist(self):
         """Clear players playlist."""
